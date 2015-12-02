@@ -1,0 +1,14 @@
+#!/bin/bash
+
+WORKSPACE=${1-${WORKSPACE-$(cd ..; pwd)}}
+
+DOCKER_ID="PowerNexBuild"
+wget "https://www.archlinux.org/mirrorlist/?country=SE&protocol=http&ip_version=4" -O "mirrorlist"
+sed -i "s/#Server/Server/g" mirrorlist
+
+docker pull vlpro/arch-yaourt
+docker build -t powernex-buildenv .
+docker create --name=${DOCKER_ID} -v $WORKSPACE:/root/PowerNex -it powernex-buildenv:latest
+docker start -ai ${DOCKER_ID}
+docker cp ${DOCKER_ID}:/root/PowerNex/powernex.iso .
+docker rm ${DOCKER_ID}
