@@ -1,0 +1,78 @@
+#+begin_src plantuml :file ttystructure.png
+scale 1v
+
+
+interface ContentLine {
+ Height(width: int): int
+ Render(...)
+}
+
+class TextLine implements ContentLine {
+ text
+}
+
+class ImageLine implements ContentLine {
+ image
+}
+
+class ContentBuffer {
+ ContentLine[] lines;
+}
+
+ContentBuffer o- ContentLine
+
+interface TTY {
+ buf: ContentBuffer
+}
+TTY o- ContentBuffer
+
+class TextModeTTY implements TTY {
+  kb: KeyboardManager
+}
+
+abstract class GPUTTY implements TTY {
+ width: ulong
+ height: ulong
+ depth: ubyte
+ kb: KeyboardManager
+ externalRenderer: CallBack;
+}
+
+class SerialTTY implements TTY {
+ port: COM -- Both input and output
+}
+
+class BGATTY extends GPUTTY
+
+#+end_src
+
+#+RESULTS:
+[[file:ttystructure.png]]
+
+
+
+#+begin_src d
+void KMain() {
+	TTYManager mgr = ...;
+	TTY scr = mgr.Get(0); // TextModeTTY
+	/***PreInit***/ // TextMode Era
+  ...
+	/***Welcome***/ // TextMode Era
+	scr.Writef("%s to PowerNex %d.%d", "Welcome", 0, 1);
+	/***Init***/
+	...
+	auto id = mgr.RegisterScreen(new BGA());
+	{
+		mgr.Remove(scr); //mgr.count = 0;
+		mgr.Add(new BGATTY(id, scr.Buffer)); // 0
+		scr.destroy; scr = mgr.Get(0);
+
+		foreach (i; 1 .. 10) // 1 - 9
+			mgr.Add(new GPUTTY(id));
+		//mgr.count = 10;
+	}
+	
+	/***Done***/
+	mgr.Get(7).Program = Exec("/Binary/Init");
+}
+#+end_src
