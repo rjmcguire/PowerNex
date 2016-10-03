@@ -5,6 +5,9 @@ import Data.LinkedList;
 import Memory.Paging;
 import Memory.Heap;
 import Data.Register;
+import IO.FS.FileNode;
+import IO.FS.DirectoryNode;
+import Data.ELF;
 
 extern (C) void switchToUserMode(ulong loc, ulong stack);
 
@@ -26,11 +29,11 @@ struct TLS {
 
 	static TLS* Init(Process* process, ubyte[] data) {
 		VirtAddress addr = VirtAddress(process.heap.Alloc(data.length + TLS.sizeof));
+		memcpy(addr.Ptr, data.ptr, data.length);
 		TLS* this_ = (addr + data.length).Ptr!TLS;
 		this_.self = this_;
 		this_.startOfTLS = addr.Ptr!ubyte[0 .. data.length];
 		this_.process = process;
-		memcpy(addr.Ptr, data.ptr, data.length);
 		return this_;
 	}
 }
@@ -50,6 +53,10 @@ struct ImageInformation {
 	VirtAddress userStack;
 	VirtAddress kernelStack;
 	ubyte[] defaultTLS;
+	char*[] arguments;
+	FileNode file;
+	ELF elf;
+
 	//TODO: fill in
 }
 
@@ -66,6 +73,22 @@ enum WaitReason {
 	Join //more e.g. harddrive, networking, mutex...
 }
 
+struct FileDescriptor {
+	size_t id;
+	FileNode node;
+	this(FileDescriptor* fd) {
+		this.id = fd.id;
+		this.node = fd.node;
+		node.Open();
+	}
+
+	this(size_t id, FileNode node) {
+		this.id = id;
+		this.node = node;
+		node.Open();
+	}
+}
+
 struct Process {
 	PID pid;
 	string name;
@@ -79,6 +102,7 @@ struct Process {
 	bool kernelProcess;
 	Registers syscallRegisters;
 	Heap heap;
+	DirectoryNode currentDirectory;
 
 	Process* parent;
 	LinkedList!Process children;
@@ -86,7 +110,9 @@ struct Process {
 	ProcessState state;
 	ulong returnCode;
 
-	// MUTEX LOCKS
 	WaitReason wait;
 	ulong waitData;
+
+	LinkedList!FileDescriptor fileDescriptors;
+	size_t fdCounter;
 }

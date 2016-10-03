@@ -309,13 +309,18 @@ public:
 		}
 	}
 
-	void MapAndRun() {
+	void MapAndRun(string[] args) {
 		import Memory.Paging;
 		import Task.Scheduler;
 
 		Scheduler scheduler = GetScheduler;
 		Process* process = scheduler.CurrentProcess;
 		Paging paging = process.threadState.paging;
+
+		string[] tmpArgs;
+		tmpArgs.length = args.length;
+		foreach (idx, arg; args)
+			tmpArgs[idx] = arg.dup;
 
 		if (process.heap && !(--process.heap.RefCounter))
 			process.heap.destroy;
@@ -326,41 +331,43 @@ public:
 
 		foreach (idx; 0 .. header.programHeaderCount) {
 			ELF64ProgramHeader program = GetProgramHeader(idx);
-			if (program.type != ELF64ProgramHeader.Type.Load)
-				continue;
+			if (program.type == ELF64ProgramHeader.Type.Load) {
 
-			MapMode mode = MapMode.User;
-			if (!(program.flags & ELF64ProgramHeader.Flags.X))
-				mode |= MapMode.NoExecute;
-			if (program.flags & ELF64ProgramHeader.Flags.W)
-				mode |= MapMode.Writable;
-			// Page will always be readable
+				MapMode mode = MapMode.User;
+				if (!(program.flags & ELF64ProgramHeader.Flags.X))
+					mode |= MapMode.NoExecute;
+				if (program.flags & ELF64ProgramHeader.Flags.W)
+					mode |= MapMode.Writable;
+				// Page will always be readable
 
-			VirtAddress start = program.virtAddress & ~0xFFF;
-			VirtAddress end = program.virtAddress + program.memorySize;
-			VirtAddress cur = start;
-			while (cur < end) {
-				paging.MapFreeMemory(cur, MapMode.DefaultKernel);
-				cur += 0x1000;
-			}
+				VirtAddress start = program.virtAddress & ~0xFFF;
+				VirtAddress end = program.virtAddress + program.memorySize;
+				VirtAddress cur = start;
+				while (cur < end) {
+					paging.MapFreeMemory(cur, MapMode.DefaultKernel);
+					cur += 0x1000;
+				}
 
-			log.Debug("Start: ", start, " End: ", end, " cur: ", cur, " Mode: R", (mode & MapMode.Writable) ? "W" : "",
-					(mode & MapMode.NoExecute) ? "" : "X", (mode & MapMode.User) ? "-User" : "");
+				log.Debug("Start: ", start, " End: ", end, " cur: ", cur, " Mode: R", (mode & MapMode.Writable) ? "W"
+						: "", (mode & MapMode.NoExecute) ? "" : "X", (mode & MapMode.User) ? "-User" : "");
 
-			memset(start.Ptr, 0, (program.virtAddress - start).Int);
-			cur = (program.virtAddress + program.fileSize);
-			memset(cur.Ptr, 0, (end - cur).Int);
-			file.Read(program.virtAddress.Ptr!ubyte[0 .. program.fileSize], program.offset.Int);
+				memset(start.Ptr, 0, (program.virtAddress - start).Int);
+				cur = (program.virtAddress + program.fileSize);
+				memset(cur.Ptr, 0, (end - cur).Int);
+				file.Read(program.virtAddress.Ptr!ubyte[0 .. program.fileSize], program.offset.Int);
 
-			cur = start;
-			while (cur < end) {
-				auto page = paging.GetPage(cur);
-				page.Mode = mode;
-				cur += 0x1000;
-			}
+				cur = start;
+				while (cur < end) {
+					auto page = paging.GetPage(cur);
+					page.Mode = mode;
+					paging.FlushPage(cur);
+					cur += 0x1000;
+				}
 
-			if (end > startHeap)
-				startHeap = end;
+				if (end > startHeap)
+					startHeap = end;
+			} else if (program.type == ELF64ProgramHeader.Type.ThreadLocalStorage)
+				process.image.defaultTLS = program.virtAddress.Ptr!ubyte[0 .. program.memorySize];
 		}
 
 		// Setup stack, setup heap
@@ -376,6 +383,37 @@ public:
 		enum StackSize = 0x1000;
 		VirtAddress userStack = VirtAddress(process.heap.Alloc(StackSize)) + StackSize;
 		process.image.userStack = userStack;
+		process.threadState.tls = TLS.Init(process, false);
+
+		{
+			ubyte length = 0;
+			foreach (arg; tmpArgs)
+				length += arg.length + 1;
+
+			const ulong endOfArgs = length;
+			length += ulong.sizeof * (tmpArgs.length + 1);
+
+			VirtAddress elfArgs = process.heap.Alloc(length).VirtAddress;
+			VirtAddress cur = elfArgs;
+			char*[] entries = (elfArgs + endOfArgs).Ptr!(char*)[0 .. tmpArgs.length + 1];
+			foreach (idx, arg; tmpArgs) {
+				entries[idx] = cur.Ptr!char;
+				cur.Ptr!char[0 .. arg.length] = arg[];
+				cur.Ptr!ubyte[arg.length] = 0;
+				cur += arg.length + 1;
+			}
+			entries[$ - 1] = null;
+
+			process.image.arguments = cast(char*[])entries;
+		}
+
+		process.name = file.Name.dup;
+		process.image.file = file;
+		process.image.elf = this;
+
+		foreach (arg; tmpArgs)
+			arg.destroy;
+		tmpArgs.destroy;
 
 		switchToUserMode(header.entry.Int, userStack.Int);
 	}

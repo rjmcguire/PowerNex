@@ -6,6 +6,8 @@ import Memory.FrameAllocator;
 import IO.Log;
 import Data.Linker;
 
+extern (C) void CPU_flushPage(ulong addr);
+
 enum MapMode : ulong { // TODO: Implement the rest.
 	Present = 1 << 0,
 	Writable = 1 << 1,
@@ -159,7 +161,6 @@ public:
 	this(Paging other) {
 		this();
 
-		log.Debug("Starting clone...");
 		Table!4* otherPML4 = other.root;
 		Table!4* myPML4 = root;
 		for (ushort pml4Idx = 0; pml4Idx < 512 - 1 /* Kernel PDP */ ; pml4Idx++) {
@@ -192,6 +193,9 @@ public:
 						myPTEntry.Data = phys;
 						myPTEntry.Mode = otherPTEntry_ptr.Mode;
 						myPTEntry.Present = true;
+						VirtAddress addr = VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL | cast(ulong)pdIdx << 21UL);
+
+						FlushPage(addr);
 						memcpy(phys.Virtual.Ptr, otherPTEntry_ptr.Data.Virtual.Ptr, 0x1000 * 512); //Defined in object.d, 0x200 * 8 = 0x1000
 					} else {
 						Table!1* otherPTEntry = otherPTEntry_ptr.Data.Virtual.Ptr!(Table!1);
@@ -206,6 +210,10 @@ public:
 								Present = true;
 							}
 
+							VirtAddress addr = VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL | cast(
+									ulong)pdIdx << 21UL | cast(ulong)ptIdx << 12UL);
+							FlushPage(addr);
+
 							memcpy(phys.Virtual.Ptr, otherPTEntry.children[ptIdx].Data.Virtual.Ptr, 0x1000); // TODO: Implement Copy-on-write, so we can skip this step!
 						}
 					}
@@ -214,7 +222,6 @@ public:
 		}
 		myPML4.children[256] = otherPML4.children[256]; // 512GiB Lower mapping
 		myPML4.children[511] = otherPML4.children[511]; // Map Kernel
-		log.Debug("Clone done!");
 	}
 
 	void Map(VirtAddress virt, PhysAddress phys, MapMode pageMode, MapMode tablesMode = MapMode.DefaultUser) {
@@ -234,6 +241,7 @@ public:
 		page.Mode = pageMode;
 		page.Data = phys;
 		page.Present = true;
+		FlushPage(virt);
 	}
 
 	void Unmap(VirtAddress virt) {
@@ -244,6 +252,7 @@ public:
 		page.Mode = MapMode.Empty;
 		page.Data = PhysAddress();
 		page.Present = false;
+		FlushPage(virt);
 	}
 
 	void UnmapAndFree(VirtAddress virt) {
@@ -256,6 +265,7 @@ public:
 		page.Mode = MapMode.Empty;
 		page.Data = PhysAddress();
 		page.Present = false;
+		FlushPage(virt);
 	}
 
 	PhysAddress MapFreeMemory(VirtAddress virt, MapMode pageMode, MapMode tablesMode = MapMode.DefaultUser) {
@@ -331,26 +341,30 @@ public:
 							for (ushort ptIdx = 0; ptIdx < 512; ptIdx++)
 								with (myPTEntry.Get(ptIdx))
 									if (Present) {
-										log.Warning("Freeing Page: ",
-												VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL | cast(
-													ulong)pdIdx << 21UL | cast(ulong)ptIdx << 12UL));
+										VirtAddress addr = VirtAddress(cast(ulong)pml4Idx << 39UL | cast(
+												ulong)pdpIdx << 30UL | cast(ulong)pdIdx << 21UL | cast(ulong)ptIdx << 12UL);
 										FrameAllocator.Free(Data);
+										Present = false;
+										FlushPage(addr);
 									}
 
-						log.Warning("Freeing Table!1: ",
-								VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL | cast(ulong)pdIdx << 21UL));
+						//log.Warning("Freeing Table!1: ", VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL | cast(ulong)pdIdx << 21UL));
 						FrameAllocator.Free(pt_ptr.Data);
 					}
 				}
-				log.Warning("Freeing Table!2: ", VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL));
+				//log.Warning("Freeing Table!2: ", VirtAddress(cast(ulong)pml4Idx << 39UL | cast(ulong)pdpIdx << 30UL));
 				FrameAllocator.Free(pd_ptr.Data);
 			}
-			log.Warning("Freeing Table!3: ", VirtAddress(cast(ulong)pml4Idx << 39UL));
+			//log.Warning("Freeing Table!3: ", VirtAddress(cast(ulong)pml4Idx << 39UL));
 			FrameAllocator.Free(pdp_ptr.Data);
 			pdp_ptr.Mode = MapMode.Empty;
 			pdp_ptr.Data = PhysAddress();
 			pdp_ptr.Present = false;
 		}
+	}
+
+	void FlushPage(VirtAddress virt) {
+		CPU_flushPage(virt.Int);
 	}
 
 	@property Table!4* RootTable() {

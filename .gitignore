@@ -17,3 +17,7 @@ Utils/MakeInitrd
 *.o
 .dub
 Initrd/Binary
+*.a
+*.krl
+*.di
+*~

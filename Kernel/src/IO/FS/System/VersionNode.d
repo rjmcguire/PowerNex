@@ -19,7 +19,7 @@ public:
 
 		string data = "Compiled using '" ~ __VENDOR__ ~ "' D version " ~ itoa(major, majorBuf) ~ "." ~ itoa(minor, minorBuf) ~ "\n";
 
-		if (offset > data.length)
+		if (offset >= data.length)
 			return 0;
 		ulong size = buffer.length;
 		ulong end = size + offset;
@@ -38,7 +38,8 @@ public:
 		return -1;
 	}
 
-	override void Open() {
+	override bool Open() {
+		return true;
 	}
 
 	override void Close() {
